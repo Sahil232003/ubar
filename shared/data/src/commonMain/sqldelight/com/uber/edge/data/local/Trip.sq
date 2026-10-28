@@ -1,0 +1,141 @@
+-- PRD Section 10.2: SQLite Local Schema with WAL Mode
+
+CREATE TABLE trips (
+    id TEXT NOT NULL PRIMARY KEY,
+    status TEXT NOT NULL,
+    status_ordinal INTEGER NOT NULL,
+    pickup_json TEXT,
+    dropoff_json TEXT,
+    dropoff_hlc TEXT,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    updated_hlc TEXT NOT NULL
+);
+
+CREATE TABLE trip_notes (
+    tag TEXT NOT NULL PRIMARY KEY,
+    trip_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    add_hlc TEXT NOT NULL,
+    removed INTEGER NOT NULL DEFAULT 0,
+    remove_hlc TEXT,
+    FOREIGN KEY(trip_id) REFERENCES trips(id) ON DELETE CASCADE
+);
+
+CREATE TABLE routes (
+    trip_id TEXT NOT NULL,
+    route_version INTEGER NOT NULL,
+    polyline TEXT NOT NULL,
+    distance_m INTEGER NOT NULL,
+    eta_sec INTEGER NOT NULL,
+    received_at INTEGER NOT NULL,
+    PRIMARY KEY(trip_id, route_version)
+);
+
+CREATE TABLE location_points (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    trip_id TEXT,
+    t INTEGER NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    acc_m REAL NOT NULL,
+    spd REAL NOT NULL,
+    brg REAL NOT NULL,
+    uploaded INTEGER NOT NULL DEFAULT 0,
+    batch_id TEXT
+);
+
+CREATE INDEX idx_location_points_uploaded_t ON location_points(uploaded, t);
+
+CREATE TABLE outbox_ops (
+    op_id TEXT NOT NULL PRIMARY KEY,
+    entity TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    field TEXT NOT NULL,
+    crdt TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    hlc TEXT NOT NULL,
+    vclock_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'PENDING', -- PENDING | INFLIGHT | ACKED | REJECTED
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_outbox_ops_state_hlc ON outbox_ops(state, hlc);
+
+CREATE TABLE sync_meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE surge_layer (
+    h3 TEXT NOT NULL PRIMARY KEY,
+    mult REAL NOT NULL,
+    layer_version INTEGER NOT NULL
+);
+
+-- Queries for Trips
+getTripById:
+SELECT * FROM trips WHERE id = ?;
+
+getActiveTrip:
+SELECT * FROM trips WHERE status != 'COMPLETED' AND status != 'CANCELLED' LIMIT 1;
+
+upsertTrip:
+INSERT OR REPLACE INTO trips (id, status, status_ordinal, pickup_json, dropoff_json, dropoff_hlc, server_version, updated_hlc)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+updateTripStatus:
+UPDATE trips SET status = ?, status_ordinal = ?, updated_hlc = ? WHERE id = ?;
+
+-- Queries for Trip Notes (OR-Set)
+getNotesForTrip:
+SELECT * FROM trip_notes WHERE trip_id = ? AND removed = 0;
+
+insertNote:
+INSERT OR REPLACE INTO trip_notes (tag, trip_id, text, add_hlc, removed, remove_hlc)
+VALUES (?, ?, ?, ?, 0, NULL);
+
+removeNote:
+UPDATE trip_notes SET removed = 1, remove_hlc = ? WHERE tag = ?;
+
+-- Queries for Location Points
+insertLocationPoint:
+INSERT INTO location_points (trip_id, t, lat, lng, acc_m, spd, brg, uploaded, batch_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL);
+
+getUnuploadedPoints:
+SELECT * FROM location_points WHERE uploaded = 0 ORDER BY t ASC LIMIT ?;
+
+markPointsUploaded:
+UPDATE location_points SET uploaded = 1, batch_id = ? WHERE id IN ?;
+
+-- NFR-06: Prune location points older than 72 hours that are already uploaded
+pruneUploadedPoints:
+DELETE FROM location_points WHERE uploaded = 1 AND t < ?;
+
+-- Queries for Outbox Ops
+insertOutboxOp:
+INSERT INTO outbox_ops (op_id, entity, entity_id, field, crdt, value_json, hlc, vclock_json, state, attempts, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?);
+
+getPendingOutboxOps:
+SELECT * FROM outbox_ops WHERE state = 'PENDING' ORDER BY created_at ASC LIMIT ?;
+
+markOpsInFlight:
+UPDATE outbox_ops SET state = 'INFLIGHT' WHERE op_id IN ?;
+
+markOpsAcked:
+UPDATE outbox_ops SET state = 'ACKED' WHERE op_id IN ?;
+
+incrementOpAttempts:
+UPDATE outbox_ops SET attempts = attempts + 1, state = 'PENDING' WHERE op_id IN ?;
+
+countPendingOps:
+SELECT count(*) FROM outbox_ops WHERE state = 'PENDING' OR state = 'INFLIGHT';
+
+-- Queries for Sync Meta
+getMeta:
+SELECT value FROM sync_meta WHERE key = ?;
+
+setMeta:
+INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?);
