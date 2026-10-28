@@ -1,0 +1,32 @@
+# Build and IDE
+.gradle/
+build/
+*/build/
+.idea/
+*.iml
+.DS_Store
+
+# Node / Gateway
+node_modules/
+dist/
+*.log
+.env
+
+# Android
+.cxx/
+local.properties
+*.apk
+*.aab
+
+# iOS / Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+*.xcworkspace/*
+!*.xcworkspace/contents.xcworkspacedata
+DerivedData/
+Pods/
+
+# Python / ML
+__pycache__/
+*.pyc
+.venv/
