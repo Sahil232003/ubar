@@ -1,6 +1,7 @@
 {
   "name": "uber-telemetry-gateway",
   "version": "1.0.0",
+  "type": "module",
   "description": "Real-Time Edge-AI Logistics Telemetry Gateway & Scenario Engine",
   "main": "src/server.ts",
   "scripts": {
