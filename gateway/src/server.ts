@@ -315,14 +315,20 @@ export function createGatewayApp(options: { scenarioIntervalMs?: number } = {}) 
 }
 
 // Start standalone server when executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+export async function startServer(port: number = 8080) {
   const { app } = createGatewayApp();
-  const PORT = Number(process.env.PORT) || 8080;
-  app.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
-    if (err) {
-      console.error(err);
-      process.exit(1);
-    }
-    console.log(`🚀 Uber Telemetry Gateway running on ${address}`);
+  const PORT = Number(process.env.PORT) || port;
+  await app.listen({ port: PORT, host: '0.0.0.0' });
+  console.log(`🚀 Uber Telemetry Gateway running on http://localhost:${PORT}`);
+  return app;
+}
+
+// Check if running as main script
+const currentFile = import.meta.url.replace(/\\/g, '/');
+const entryArg = (process.argv[1] || '').replace(/\\/g, '/');
+if (currentFile.includes(entryArg) || entryArg.includes('server')) {
+  startServer().catch((err) => {
+    console.error('Fatal startup error:', err);
+    process.exit(1);
   });
 }
